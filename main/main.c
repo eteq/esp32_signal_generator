@@ -17,14 +17,21 @@
 #define TOUCHPAD_FILTER_TOUCH_PERIOD 10
 #define THRESH_SCALE 2 / 3
 
+#define INCREMENT_TRIGGER_PIN 21  //21 is the one on the end of the long row
+#define DEBOUNCE_TIME_US 50000 // 50 ms
+
 #define LED_GPIO GPIO_NUM_13
 
-#define NFREQS 6
-uint32_t FREQS[NFREQS] = {130, 260, 1250, 2500, 5000, 25000};
+#define ESP_INTR_FLAG_DEFAULT 0
+
+#define NFREQS 9
+uint32_t FREQS[NFREQS] = {130, 260, 750, 1500, 2500, 5000, 12500, 25000, 50000};
 
 
 bool touching = false, increment = false;
 int touch_i = 0;
+
+esp_timer_handle_t debounce_timer;
 
 
 esp_err_t setup_cw(uint32_t freq) {
@@ -74,6 +81,60 @@ void setup_touch(void) {
     touch_pad_intr_enable();
 }
 
+static void gpio_isr(void* arg) {
+    // for the gpio trigger
+
+    ESP_ERROR_CHECK(gpio_intr_disable(INCREMENT_TRIGGER_PIN));
+    ESP_ERROR_CHECK(esp_timer_start_once(debounce_timer, DEBOUNCE_TIME_US));
+
+    increment = true;
+}
+
+
+static void debounce_timer_callback(void* arg)
+{
+    ESP_ERROR_CHECK(gpio_intr_enable(INCREMENT_TRIGGER_PIN));
+}
+
+void setup_gpio(void) {
+    if (ESP_OK != gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT)) {
+        printf("gpio_install_isr_servic failed!\n");
+        return;
+    };
+
+    gpio_config_t io_conf;
+    //interrupt of rising edge
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
+    //bit mask of the pins, use GPIO4/5 here
+    io_conf.pin_bit_mask = (1ULL << INCREMENT_TRIGGER_PIN);
+    //set as input mode
+    io_conf.mode = GPIO_MODE_INPUT;
+    //enable pull-up mode
+    io_conf.pull_up_en = 1;
+    //disable pull-down mode
+    io_conf.pull_down_en = 0;
+    if (ESP_OK != gpio_config(&io_conf)) {
+        printf("gpio config failed!\n");
+        return;
+    };
+
+    if (ESP_OK != gpio_isr_handler_add(INCREMENT_TRIGGER_PIN, gpio_isr, (void*) INCREMENT_TRIGGER_PIN)) {
+        printf("gpio isr setup failed!\n");
+        return;
+    }
+
+     const esp_timer_create_args_t debounce_timer_args = {
+            .callback = &debounce_timer_callback,
+            /* argument specified here will be passed to timer callback function */
+            .arg = (void*) NULL,
+            .name = "debounce-timer"
+    };
+
+    ESP_ERROR_CHECK(esp_timer_create(&debounce_timer_args, &debounce_timer));
+
+    printf("gpio setup succeded!\n");
+}
+
 esp_err_t setup_led(void) {
     sigmadelta_config_t sigmadelta_cfg = {
         .channel = SIGMADELTA_CHANNEL_0,
@@ -95,6 +156,7 @@ void app_main(void) {
     };
 
     setup_touch();
+    setup_gpio();
     touch_pad_get_thresh(TOUCH_PIN, &thresh_value);
     printf("Touch value threshold at startup: %d\n", thresh_value);
 
@@ -132,7 +194,7 @@ void app_main(void) {
                 touching = false;
             }
         }
-
+        //printf("GPIO level: %d\n", gpio_get_level(INCREMENT_TRIGGER_PIN));
         vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
