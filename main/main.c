@@ -28,8 +28,9 @@
 uint32_t FREQS[NFREQS] = {130, 260, 750, 1500, 2500, 5000, 12500, 25000, 50000};
 
 
-bool touching = false, increment = false;
-int touch_i = 0;
+bool touching = false;
+int touch_i = 6;
+bool increment = true;  // set it up the first time
 
 esp_timer_handle_t debounce_timer;
 
@@ -145,11 +146,17 @@ esp_err_t setup_led(void) {
     return sigmadelta_config(&sigmadelta_cfg);
 }
 
+void update_led(void) {
+    double touchi_frac = (touch_i % NFREQS) / (NFREQS-1.);
+    sigmadelta_set_duty(SIGMADELTA_CHANNEL_0, 255 * (touchi_frac*touchi_frac) - 128);
+}
+
 
 void app_main(void) {
     uint16_t touch_value, thresh_value;
 
     if (setup_led() == ESP_OK) {
+
         printf("LED setup success.\n");
     } else {
         printf("LED setup failed.\n");
@@ -169,7 +176,9 @@ void app_main(void) {
     dac_cw_generator_enable();
     sigmadelta_set_duty(SIGMADELTA_CHANNEL_0, -128);  // Initialize to off once things are actually going
 
+
     while (1) {
+        vTaskDelay(100 / portTICK_PERIOD_MS);
         if (increment) {
             touch_i++;
 
@@ -179,8 +188,7 @@ void app_main(void) {
                printf("Failed to set to new frequency %d\n", FREQS[touch_i % NFREQS]);
             };
 
-            double touchi_frac = (touch_i % NFREQS) / (NFREQS-1.);
-            sigmadelta_set_duty(SIGMADELTA_CHANNEL_0, 255 * (touchi_frac*touchi_frac) - 128);
+            update_led();
 
             increment = false;
         }
@@ -194,7 +202,5 @@ void app_main(void) {
                 touching = false;
             }
         }
-        //printf("GPIO level: %d\n", gpio_get_level(INCREMENT_TRIGGER_PIN));
-        vTaskDelay(100 / portTICK_PERIOD_MS);
     }
 }
